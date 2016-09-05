@@ -1,0 +1,161 @@
+CreateClientConVar( "ahud_enabled", 1 )
+
+local Clamp = math.Clamp
+
+surface.CreateFont( "akbar50", {
+font = "Verdana",
+size = 28,
+weight = 500,
+antialias = true,
+})
+
+surface.CreateFont( "akbar30", {
+font = "Tahoma",
+size = 21,
+weight = 500,
+antialias = true,
+})
+
+surface.CreateFont( "akbar70", {
+font = "Tahoma",
+size = 16,
+weight = 500,
+antialias = true,
+})
+
+local H, W = ScrH(), ScrW()
+local AngTemp = Angle(0,0,0)
+local DPos = Vector(0,0,0)
+local ARTemp = 0
+local HPTemp = 0
+local Temp1 = 0
+local Temp2 = 0
+local Al = 0
+
+local hudpos = 0
+local tmp_hudpos = 0
+
+local display_money = 0
+
+local function getw( text )
+
+surface.SetFont( "HUDSELECTIONTEXT" )
+local w,h = surface.GetTextSize( text )
+
+return w
+
+end
+
+timer.Create( "update_money", 1, 0, function()
+
+if not IsValid( LocalPlayer() ) then return end
+
+display_money = LocalPlayer():GetMoney()
+
+end)
+
+local money = Material( "icon16/money_add.png" )
+
+local draw = draw
+
+local drb,ddt = draw.RoundedBox, draw.DrawText
+
+hook.Add("HUDPaint","DrawDynamicHud",function()
+
+if WELCOME_BLIND != false then return end
+if GetConVarNumber( "ahud_enabled" ) == 0 then return end
+
+local me = LocalPlayer()
+
+local Ang = me:EyeAngles() - AngTemp
+local dx = Ang.pitch
+local dy = Ang.yaw
+local HP = Clamp(me:Health(),0,100000000000)
+local AR = Clamp(me:Armor(),0,100)
+
+local mx = me:GetMaxHealth()
+
+local hp = math.Clamp( HP, 0, mx )
+
+DPos = DPos / 1.03
+if(dx or dy) then
+if(dy > 100 or dy < -100) then
+dy = 0
+end
+DPos = DPos + Vector(dy, -dx)/2
+end
+
+local hp_draw = me:Health()
+local ap_draw = AR
+
+drb(0, 30 + DPos.x, ScrH()-100 + DPos.y, 360, 70, Color(60,60,60,200))
+
+drb(0, 120 + DPos.x, ScrH()-93 + DPos.y, 260, 25, Color(60,60,60,200))
+drb(0, 120 + DPos.x, ScrH()-63 + DPos.y, 260, 25, Color(60,60,60,200))
+drb(0, 120 + DPos.x, ScrH()-93 + DPos.y, 260*(hp/mx), 25, Color(180,0,0,200))
+drb(0, 120 + DPos.x, ScrH()-63 + DPos.y, 260*(AR/100), 25, Color(0,0,120,200))
+
+ddt(('Жизни:'),"akbar30",43 + DPos.x,ScrH() - 91 + DPos.y,Color(255,255,255,255),TEXT_ALIGN_LEFT)
+ddt(('Броня:'),"akbar30",43 + DPos.x,ScrH() - 61 + DPos.y,Color(255,255,255,255),TEXT_ALIGN_LEFT)
+
+
+ddt(HP,"akbar70",(370 ) + DPos.x,ScrH() - 91 + DPos.y,Color(255,255,255,255),TEXT_ALIGN_RIGHT)
+
+ddt(AR,"akbar70",(370) + DPos.x,ScrH() - 61 + DPos.y,Color(255,255,255,255),TEXT_ALIGN_RIGHT)
+
+
+drb(0, 30 + DPos.x, ScrH()-126 + DPos.y, 20, 20, Color(60,60,60,200))
+
+surface.SetMaterial( money )
+surface.SetDrawColor( 255,255,255,255 )
+surface.DrawTexturedRect( 32 + DPos.x, ScrH()-124 + DPos.y, 16, 16 )
+
+local mani = "$"..display_money
+
+ddt( mani, "HUDSELECTIONTEXT", 55 + DPos.x, ScrH()-125 + DPos.y, Color( 255,255,255 ) )
+
+AngTemp = me:EyeAngles()
+
+end)
+
+hook.Add('RenderScreenspaceEffects','getkilled',function()
+
+if(LocalPlayer():Health()<=50) then
+
+DrawColorModify({
+
+[ "$pp_colour_addr" ] = (50-LocalPlayer():Health())/100,
+
+[ "$pp_colour_addg" ] = 0,
+
+[ "$pp_colour_addb" ] = 0,
+
+[ "$pp_colour_brightness" ] = 0,
+
+[ "$pp_colour_contrast" ] = 1,
+
+[ "$pp_colour_colour" ] = 1,
+
+[ "$pp_colour_mulr" ] = 0,
+
+[ "$pp_colour_mulg" ] = 0,
+
+[ "$pp_colour_mulb" ] = 0
+
+})
+
+end
+
+if(LocalPlayer():Health()<=10) then DrawMotionBlur(0.1, 1, 0.05) end
+
+end)
+
+
+
+//Удаление дефолтного худа
+local function HUDHide(name)
+if name == "CHudHealth" or name == "CHudBattery" then
+return false
+end
+end
+hook.Add("HUDShouldDraw", "HUDHide", HUDHide)
