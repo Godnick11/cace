@@ -1,0 +1,869 @@
+HUD ConVars
+---------------------------------------------------------------------------*/
+local ConVars = {}
+local HUDWidth
+local HUDHeight
+
+local Color = Color
+local CurTime = CurTime
+local cvars = cvars
+local DarkRP = DarkRP
+local draw = draw
+local GetConVar = GetConVar
+local hook = hook
+local IsValid = IsValid
+local Lerp = Lerp
+local localplayer
+local math = math
+local pairs = pairs
+local ScrW, ScrH = ScrW, ScrH
+local SortedPairs = SortedPairs
+local string = string
+local surface = surface
+local table = table
+local timer = timer
+local tostring = tostring
+local plyMeta = FindMetaTable("Player")
+
+local colors = {}
+colors.black = Color(0, 0, 0, 255)
+colors.blue = Color(0, 0, 255, 255)
+colors.brightred = Color(200, 30, 30, 255)
+colors.darkred = Color(0, 0, 70, 100)
+colors.darkblack = Color(0, 0, 0, 200)
+colors.gray1 = Color(0, 0, 0, 155)
+colors.gray2 = Color(51, 58, 51,100)
+colors.red = Color(255, 0, 0, 255)
+colors.white = Color(255, 255, 255, 255)
+colors.white1 = Color(255, 255, 255, 200)
+
+local function ReloadConVars()
+	ConVars = {
+		background = {0,0,0,100},
+		Healthbackground = {0,0,0,200},
+		Healthforeground = {140,0,0,180},
+		HealthText = {255,255,255,200},
+		Job1 = {0,0,150,200},
+		Job2 = {0,0,0,255},
+		salary1 = {0,150,0,200},
+		salary2 = {0,0,0,255}
+	}
+
+	for name, Colour in pairs(ConVars) do
+		ConVars[name] = {}
+		for num, rgb in SortedPairs(Colour) do
+			local CVar = GetConVar(name..num) or CreateClientConVar(name..num, rgb, true, false)
+			table.insert(ConVars[name], CVar:GetInt())
+
+			if not cvars.GetConVarCallbacks(name..num, false) then
+				cvars.AddChangeCallback(name..num, function() timer.Simple(0,ReloadConVars) end)
+			end
+		end
+		ConVars[name] = Color(unpack(ConVars[name]))
+	end
+
+
+	HUDWidth = (GetConVar("HudW") or  CreateClientConVar("HudW", 240, true, false)):GetInt()
+	HUDHeight = (GetConVar("HudH") or CreateClientConVar("HudH", 115, true, false)):GetInt()
+
+	if not cvars.GetConVarCallbacks("HudW", false) and not cvars.GetConVarCallbacks("HudH", false) then
+		cvars.AddChangeCallback("HudW", function() timer.Simple(0,ReloadConVars) end)
+		cvars.AddChangeCallback("HudH", function() timer.Simple(0,ReloadConVars) end)
+	end
+end
+ReloadConVars()
+
+local Scrw, Scrh, RelativeX, RelativeY
+/*---------------------------------------------------------------------------
+HUD Seperate Elements
+---------------------------------------------------------------------------*/
+local Health = 0
+local function DrawHealth()
+	local myHealth = localplayer:Health()
+	Health = math.min(100, (Health == myHealth and Health) or Lerp(0.1, Health, myHealth))
+
+	local DrawHealth = math.Min(Health / GAMEMODE.Config.startinghealth, 1)
+	local rounded = math.Round(3*DrawHealth)
+	local Border = math.Min(6, rounded * rounded)
+	draw.RoundedBox(Border, RelativeX + 4, RelativeY - 30, HUDWidth - 8, 20, ConVars.Healthbackground)
+	draw.RoundedBox(Border, RelativeX + 5, RelativeY - 29, (HUDWidth - 9) * DrawHealth, 18, ConVars.Healthforeground)
+
+	draw.DrawNonParsedText(math.Max(0, math.Round(myHealth)), "DarkRPHUD2", RelativeX + 4 + (HUDWidth - 8)/2, RelativeY - 32, ConVars.HealthText, 1)
+
+	-- Armor
+	local armor = localplayer:Armor()
+	if armor ~= 0 then
+		draw.RoundedBox(2, RelativeX + 4, RelativeY - 15, (HUDWidth - 8) * armor / 100, 5, colors.blue)
+	end
+end
+
+local salaryText, JobWalletText
+local function DrawInfo()
+	salaryText = salaryText or DarkRP.getPhrase("salary", DarkRP.formatMoney(localplayer:getDarkRPVar("salary")), "")
+
+	JobWalletText = JobWalletText or string.format("%s\n%s",
+		DarkRP.getPhrase("job", localplayer:getDarkRPVar("job") or ""),
+		DarkRP.getPhrase("wallet", DarkRP.formatMoney(localplayer:getDarkRPVar("money")), "")
+	)
+
+	draw.DrawNonParsedText(salaryText, "DarkRPHUD2", RelativeX + 5, RelativeY - HUDHeight + 6, ConVars.salary1, 0)
+	draw.DrawNonParsedText(salaryText, "DarkRPHUD2", RelativeX + 4, RelativeY - HUDHeight + 5, ConVars.salary2, 0)
+
+	surface.SetFont("DarkRPHUD2")
+	local w, h = surface.GetTextSize(salaryText)
+
+	draw.DrawNonParsedText(JobWalletText, "DarkRPHUD2", RelativeX + 5, RelativeY - HUDHeight + h + 6, ConVars.Job1, 0)
+	draw.DrawNonParsedText(JobWalletText, "DarkRPHUD2", RelativeX + 4, RelativeY - HUDHeight + h + 5, ConVars.Job2, 0)
+end
+
+local Page = Material("icon16/page_white_text.png")
+local function GunLicense()
+	if localplayer:getDarkRPVar("HasGunlicense") then
+		surface.SetMaterial(Page)
+		surface.SetDrawColor(255, 255, 255, 255)
+		surface.DrawTexturedRect(RelativeX + HUDWidth, Scrh - 34, 32, 32)
+	end
+end
+
+local agendaText
+local function Agenda()
+	local shouldDraw = hook.Call("HUDShouldDraw", GAMEMODE, "DarkRP_Agenda")
+	if shouldDraw == false then return end
+
+	local agenda = localplayer:getAgendaTable()
+	if not agenda then return end
+	agendaText = agendaText or DarkRP.textWrap((localplayer:getDarkRPVar("agenda") or ""):gsub("//", "\n"):gsub("\\n", "\n"), "DarkRPHUD1", 440)
+
+	draw.RoundedBox(10, 10, 10, 460, 110, colors.gray1)
+	draw.RoundedBox(10, 12, 12, 456, 106, colors.gray2)
+	draw.RoundedBox(10, 12, 12, 456, 20, colors.darkred)
+
+	draw.DrawNonParsedText(agenda.Title, "DarkRPHUD1", 30, 12, colors.red, 0)
+	draw.DrawNonParsedText(agendaText, "DarkRPHUD1", 30, 35, colors.white, 0)
+end
+
+hook.Add("DarkRPVarChanged", "agendaHUD", function(ply, var, _, new)
+	if ply ~= localplayer then return end
+	if var == "agenda" and new then
+		agendaText = DarkRP.textWrap(new:gsub("//", "\n"):gsub("\\n", "\n"), "DarkRPHUD1", 440)
+	else
+		agendaText = nil
+	end
+
+	if var == "salary" then
+		salaryText = DarkRP.getPhrase("salary", DarkRP.formatMoney(new), "")
+	end
+
+	if var == "job" or var == "money" then
+		JobWalletText = string.format("%s\n%s",
+			DarkRP.getPhrase("job", var == "job" and new or localplayer:getDarkRPVar("job") or ""),
+			DarkRP.getPhrase("wallet", var == "money" and DarkRP.formatMoney(new) or DarkRP.formatMoney(localplayer:getDarkRPVar("money")), "")
+		)
+	end
+end)
+
+local VoiceChatTexture = surface.GetTextureID("voice/icntlk_pl")
+local function DrawVoiceChat()
+	if localplayer.DRPIsTalking then
+		local chbxX, chboxY = chat.GetChatBoxPos()
+
+		local Rotating = math.sin(CurTime()*3)
+		local backwards = 0
+		if Rotating < 0 then
+			Rotating = 1-(1+Rotating)
+			backwards = 180
+		end
+		surface.SetTexture(VoiceChatTexture)
+		surface.SetDrawColor(ConVars.Healthforeground)
+		surface.DrawTexturedRectRotated(Scrw - 100, chboxY, Rotating*96, 96, backwards)
+	end
+end
+
+local function LockDown()
+	local chbxX, chboxY = chat.GetChatBoxPos()
+	if GetGlobalBool("DarkRP_LockDown") then
+		local cin = (math.sin(CurTime()) + 1) / 2
+		local chatBoxSize = math.floor(Scrh / 4)
+		draw.DrawNonParsedText(DarkRP.getPhrase("lockdown_started"), "ScoreboardSubtitle", ScrW()/2, ScrH() - ScrH()/6, Color(cin * 255, 0, 255 - (cin * 255), 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+	end
+end
+
+local Arrested = function() end
+
+usermessage.Hook("GotArrested", function(msg)
+	local StartArrested = CurTime()
+	local ArrestedUntil = msg:ReadFloat()
+
+	Arrested = function()
+		if CurTime() - StartArrested <= ArrestedUntil and localplayer:getDarkRPVar("Arrested") then
+		draw.DrawNonParsedText(DarkRP.getPhrase("youre_arrested", math.ceil(ArrestedUntil - (CurTime() - StartArrested))), "DarkRPHUD1", ScrW()/2, ScrH() - ScrH()/8, colors.white, 1)
+		elseif not localplayer:getDarkRPVar("Arrested") then
+			Arrested = function() end
+		end
+	end
+end)
+
+local AdminTell = function() end
+
+usermessage.Hook("AdminTell", function(msg)
+	timer.Destroy("DarkRP_AdminTell")
+	local Message = msg:ReadString()
+
+	AdminTell = function()
+		draw.RoundedBox(4, 10, 10, ScrW() - 20, 110, colors.darkblack)
+		draw.DrawNonParsedText(DarkRP.getPhrase("listen_up"), "GModToolName", ScrW() / 2 + 10, 10, colors.white, 1)
+		draw.DrawNonParsedText(Message, "ChatFont", ScrW() / 2 + 10, 90, colors.brightred, 1)
+	end
+
+	timer.Create("DarkRP_AdminTell", 10, 1, function()
+		AdminTell = function() end
+	end)
+end)
+
+/*---------------------------------------------------------------------------
+Drawing the HUD elements such as Health etc.
+---------------------------------------------------------------------------*/
+local function DrawHUD()
+	localplayer = localplayer and IsValid(localplayer) and localplayer or LocalPlayer()
+	if not IsValid(localplayer) then return end
+
+	local shouldDraw = hook.Call("HUDShouldDraw", GAMEMODE, "DarkRP_HUD")
+	if shouldDraw == false then return end
+
+	Scrw, Scrh = ScrW(), ScrH()
+	RelativeX, RelativeY = 0, Scrh
+
+	shouldDraw = hook.Call("HUDShouldDraw", GAMEMODE, "DarkRP_LocalPlayerHUD")
+	shouldDraw = shouldDraw ~= false and (GAMEMODE.BaseClass.HUDShouldDraw(GAMEMODE, "DarkRP_LocalPlayerHUD") ~= false)
+	if shouldDraw then
+		--	Background
+		--	draw.RoundedBox(6, 0, Scrh - HUDHeight, HUDWidth, HUDHeight, ConVars.background)
+		--	DrawHealth()
+		--	DrawInfo()
+		GunLicense()
+	end
+	Agenda()
+	DrawVoiceChat()
+	--	LockDown()
+
+--	Arrested()
+	AdminTell()
+end
+
+/*---------------------------------------------------------------------------
+Entity HUDPaint things
+---------------------------------------------------------------------------*/
+-- Draw a player's name, health and/or job above the head
+-- This syntax allows for easy overriding
+plyMeta.drawPlayerInfo = plyMeta.drawPlayerInfo or function(self)
+	local pos = self:EyePos()
+
+	pos.z = pos.z + 10 -- The position we want is a bit above the position of the eyes
+	pos = pos:ToScreen()
+	if not self:getDarkRPVar("wanted") then
+		-- Move the text up a few pixels to compensate for the height of the text
+		pos.y = pos.y - 50
+	end
+
+	if GAMEMODE.Config.showname then
+		local nick, plyTeam = self:Nick(), self:Team()
+		draw.DrawNonParsedText(nick, "DarkRPHUD2", pos.x + 1, pos.y + 1, colors.black, 1)
+		draw.DrawNonParsedText(nick, "DarkRPHUD2", pos.x, pos.y, RPExtraTeams[plyTeam] and RPExtraTeams[plyTeam].color or team.GetColor(plyTeam) , 1)
+	end
+
+	if GAMEMODE.Config.showhealth then
+		local health = DarkRP.getPhrase("health", self:Health())
+		draw.DrawNonParsedText(health, "DarkRPHUD2", pos.x + 1, pos.y + 21, colors.black, 1)
+		draw.DrawNonParsedText(health, "DarkRPHUD2", pos.x, pos.y + 20, colors.white1, 1)
+	end
+
+	if GAMEMODE.Config.showjob then
+		local teamname = self:getDarkRPVar("job") or team.GetName(self:Team())
+		draw.DrawNonParsedText(teamname, "DarkRPHUD2", pos.x + 1, pos.y + 41, colors.black, 1)
+		draw.DrawNonParsedText(teamname, "DarkRPHUD2", pos.x, pos.y + 40, colors.white1, 1)
+	end
+
+	if self:getDarkRPVar("HasGunlicense") then
+		surface.SetMaterial(Page)
+		surface.SetDrawColor(255,255,255,255)
+		surface.DrawTexturedRect(pos.x-16, pos.y + 60, 32, 32)
+	end
+end
+
+-- Draw wanted information above a player's head
+-- This syntax allows for easy overriding
+plyMeta.drawWantedInfo = plyMeta.drawWantedInfo or function(self)
+	if not self:Alive() then return end
+
+	local pos = self:EyePos()
+	if not pos:isInSight({localplayer, self}) then return end
+
+	pos.z = pos.z + 10
+	pos = pos:ToScreen()
+
+	if GAMEMODE.Config.showname then
+		draw.DrawNonParsedText(self:Nick(), "DarkRPHUD2", pos.x + 1, pos.y + 1, colors.black, 1)
+		draw.DrawNonParsedText(self:Nick(), "DarkRPHUD2", pos.x, pos.y, team.GetColor(self:Team()), 1)
+	end
+
+	local wantedText = DarkRP.getPhrase("wanted", tostring(self:getDarkRPVar("wantedReason")))
+
+	draw.DrawNonParsedText(wantedText, "DarkRPHUD2", pos.x, pos.y - 40, colors.white1, 1)
+	draw.DrawNonParsedText(wantedText, "DarkRPHUD2", pos.x + 1, pos.y - 41, colors.red, 1)
+end
+
+/*---------------------------------------------------------------------------
+The Entity display: draw HUD information about entities
+---------------------------------------------------------------------------*/
+local function DrawEntityDisplay()
+	local shouldDraw, players = hook.Call("HUDShouldDraw", GAMEMODE, "DarkRP_EntityDisplay")
+	if shouldDraw == false then return end
+
+	local shootPos = localplayer:GetShootPos()
+	local aimVec = localplayer:GetAimVector()
+
+	for k, ply in pairs(players or player.GetAll()) do
+		if ply == localplayer or not ply:Alive() or ply:GetNoDraw() then continue end
+		local hisPos = ply:GetShootPos()
+		if ply:getDarkRPVar("wanted") then ply:drawWantedInfo() end
+
+		if GAMEMODE.Config.globalshow then
+			ply:drawPlayerInfo()
+		-- Draw when you're (almost) looking at him
+		elseif hisPos:DistToSqr(shootPos) < 160000 then
+			local pos = hisPos - shootPos
+			local unitPos = pos:GetNormalized()
+			if unitPos:Dot(aimVec) > 0.95 then
+				local trace = util.QuickTrace(shootPos, pos, localplayer)
+				if trace.Hit and trace.Entity ~= ply then return end
+				ply:drawPlayerInfo()
+			end
+		end
+	end
+
+	local tr = localplayer:GetEyeTrace()
+
+	if IsValid(tr.Entity) and tr.Entity:isKeysOwnable() and tr.Entity:GetPos():Distance(localplayer:GetPos()) < 200 then
+		tr.Entity:drawOwnableInfo()
+	end
+end
+
+/*---------------------------------------------------------------------------
+Drawing death notices
+---------------------------------------------------------------------------*/
+function GM:DrawDeathNotice(x, y)
+	if not GAMEMODE.Config.showdeaths then return end
+	self.BaseClass:DrawDeathNotice(x, y)
+end
+
+/*---------------------------------------------------------------------------
+Display notifications
+---------------------------------------------------------------------------*/
+local function DisplayNotify(msg)
+	local txt = msg:ReadString()
+	GAMEMODE:AddNotify(txt, msg:ReadShort(), msg:ReadLong())
+	surface.PlaySound("buttons/lightswitch2.wav")
+
+	-- Log to client console
+	print(txt)
+end
+usermessage.Hook("_Notify", DisplayNotify)
+
+------------------------------------------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+---------------------------------------------------------------------------
+-- Actual hide HUDE lements hook
+---------------------------------------------------------------------------
+local hideHUDElements = {
+	-- if you DarkRP_HUD this to true, ALL of DarkRP's HUD will be disabled. That is the health bar and stuff,
+	-- but also the agenda, the voice chat icons, lockdown text, player arrested text and the names above players' heads
+	["DarkRP_HUD"] = false,
+
+	-- DarkRP_EntityDisplay is the text that is drawn above a player when you look at them.
+	-- This also draws the information on doors and vehicles
+	["DarkRP_EntityDisplay"] = false,
+
+	-- DarkRP_ZombieInfo draws information about zombies for admins who use /showzombie.
+	["DarkRP_ZombieInfo"] = false,
+
+	-- This is the one you're most likely to replace first
+	-- DarkRP_LocalPlayerHUD is the default HUD you see on the bottom left of the screen
+	-- It shows your health, job, salary and wallet
+	["DarkRP_LocalPlayerHUD"] = true,
+	["DarkRP_Hungermod"] = true,
+
+	-- Drawing the DarkRP agenda
+	["DarkRP_Agenda"] = false,
+	["CHudAmmo"] = true,
+}
+
+-- this is the code that actually disables the drawing.
+hook.Add("HUDShouldDraw", "HideDefaultDarkRPHud", function(name)
+	if hideHUDElements[name] then return false end
+end)
+
+----------------------------------------------
+-- Display HUD
+----------------------------------------------
+	
+surface.CreateFont("Tre24", {
+    font = "Trebuchet MS",
+    size = 24,
+    weight = 350,
+})
+
+surface.CreateFont("Admin_Tre22", {
+    font = "Verdana",
+    size = 22,
+    weight = 1000,
+})
+
+surface.CreateFont("Message_Tre22", {
+    font = "Verdana",
+    size = 18,
+    weight = 1000,
+})
+
+surface.CreateFont("Tre20", {
+    font = "Trebuchet MS",
+    size = 22,
+    weight = 350,
+})
+
+surface.CreateFont("TreCake", {
+    font = "Verdana",
+    size = 30,
+    weight = 350,
+})
+
+surface.CreateFont("MenuLarge", {
+    font = "Verdana",
+    size = 15,
+    weight = 350,
+    antialias = true,
+})
+
+surface.CreateFont("Energy_Font_1", {
+    font = "Verdana",
+    size = 16,
+    weight = 1000,
+    antialias = true,
+})
+
+zHUDMain = {}
+----------------------------------------------
+-- MAIN HUD
+----------------------------------------------
+zHUDMain = zHUDMain or {}
+zHUDMain.padding_screen = 25
+zHUDMain.hp_w = 400 --ScrW() / 4
+zHUDMain.hp_w_r = 435 --ScrW() / 4
+zHUDMain.hp_h = 20
+zHUDMain.hp_slant_x = 12
+zHUDMain.hp_padding_inner = 3
+zHUDMain.ar_w = 400 --ScrW() / 4
+zHUDMain.ar_w_r = 435 --ScrW() / 4
+zHUDMain.ar_h = 10
+zHUDMain.ar_slant_x = 12
+zHUDMain.ar_padding_inner = 2
+zHUDMain.hp_bg = Color( 30, 30, 30, 150 )
+zHUDMain.hp_fg = Color( 200, 50, 25, 250 )
+zHUDMain.ar_fg = Color( 25, 200, 255, 250 )
+zHUDMain.money_bg = Color( 20, 150, 20, 225 )
+zHUDMain.color_bg = Color( 51,51,51,200 )
+zHUDMain.font_a = "Tre24"
+zHUDMain.font_b = "Tre20"
+zHUDMain.hp_mult = 0
+zHUDMain.ar_mult = 0
+zHUDMain.offset_y = 12
+zHUDMain.money = 0
+zHUDMain._verts_hp_bg = { {}, {}, {}, {} }
+zHUDMain._verts_hp_fg = { {}, {}, {}, {} }
+zHUDMain._verts_ar_bg = { {}, {}, {}, {} }
+zHUDMain._verts_ar_fg = { {}, {}, {}, {} }
+
+-------------------------------------------------------------------------------
+-- Draw format Number
+-------------------------------------------------------------------------------
+local frame
+function formatNumber(n)
+	n = tonumber(n)
+	if (!n) then
+		return 0
+	end
+
+	if n >= 1e14 then return tostring(n) end
+    n = tostring(n)
+    sep = sep or ","
+    local dp = string.find(n, "%.") or #n+1
+	for i=dp-4, 1, -3 do
+		n = n:sub(1, i) .. sep .. n:sub(i+1)
+    end
+    return n
+end
+
+-------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
+
+function zHUDMain.Recalculate()
+	local z = zHUDMain
+	local localply = LocalPlayer()
+	if not localply or not localply:IsValid() then localply = false end
+
+	local hp_cx = ScrW() / 2
+	local hp_cy = ScrH() - z.padding_screen - z.hp_h / 2 - z.offset_y
+
+	z._hp_cx = hp_cx
+	z._hp_cy = hp_cy
+
+	hp_cx = hp_cx + 20
+		z._verts_hp_bg[ 1 ].x = hp_cx - z.hp_w_r / 2 + z.hp_slant_x
+		z._verts_hp_bg[ 1 ].y = hp_cy - z.hp_h / 2
+
+		z._verts_hp_bg[ 2 ].x = hp_cx + z.hp_w_r / 2 - z.hp_slant_x
+		z._verts_hp_bg[ 2 ].y = hp_cy - z.hp_h / 2
+
+		z._verts_hp_bg[ 3 ].x = hp_cx + z.hp_w_r / 2
+		z._verts_hp_bg[ 3 ].y = hp_cy + z.hp_h / 2
+
+		z._verts_hp_bg[ 4 ].x = hp_cx - z.hp_w_r / 2
+		z._verts_hp_bg[ 4 ].y = hp_cy + z.hp_h / 2
+
+	local hp_mult_n
+	if localply then
+		hp_mult_n = localply:Health() / 100
+	else
+		hp_mult_n = 100
+	end
+
+	hp_mult_n = math.max( 0, hp_mult_n )
+	hp_mult_n = math.min( 1, hp_mult_n )
+
+	z.hp_mult = hp_mult_n --(9 * z.hp_mult + hp_mult_n) / 10
+
+	if (z.hp_w_r/2) * z.hp_mult > z.hp_slant_x then
+		z._verts_hp_fg[ 1 ].x = hp_cx - (z.hp_w_r/2) * z.hp_mult + z.hp_slant_x + z.hp_padding_inner / 2
+		z._verts_hp_fg[ 1 ].y = hp_cy - z.hp_h / 2 + z.hp_padding_inner
+
+		z._verts_hp_fg[ 2 ].x = hp_cx + (z.hp_w_r/2) * z.hp_mult - z.hp_slant_x - z.hp_padding_inner / 2
+		z._verts_hp_fg[ 2 ].y = hp_cy - z.hp_h / 2 + z.hp_padding_inner
+
+		z._verts_hp_fg[ 3 ].x = hp_cx + (z.hp_w_r/2) * z.hp_mult - z.hp_padding_inner * 1.5
+		z._verts_hp_fg[ 3 ].y = hp_cy + z.hp_h / 2 - z.hp_padding_inner
+
+		z._verts_hp_fg[ 4 ].x = hp_cx - (z.hp_w_r/2) * z.hp_mult + z.hp_padding_inner * 1.5
+		z._verts_hp_fg[ 4 ].y = hp_cy + z.hp_h / 2 - z.hp_padding_inner
+	else
+		z._verts_hp_fg[ 1 ].x = 0
+		z._verts_hp_fg[ 1 ].y = 0
+
+		z._verts_hp_fg[ 2 ].x = 0
+		z._verts_hp_fg[ 2 ].y = 0
+
+		z._verts_hp_fg[ 3 ].x = 0
+		z._verts_hp_fg[ 3 ].y = 0
+
+		z._verts_hp_fg[ 4 ].x = 0
+		z._verts_hp_fg[ 4 ].y = 0	
+	end
+
+	local ar_cx = ScrW() / 2
+	local ar_cy = ScrH() - 17 - z.offset_y
+
+	z._ar_cx = ar_cx
+	z._ar_cy = ar_cy
+
+	ar_cx = ar_cx + 20
+
+	z._verts_ar_bg[ 1 ].x = ar_cx - z.ar_w_r / 2
+	z._verts_ar_bg[ 1 ].y = ar_cy - z.ar_h / 2
+
+	z._verts_ar_bg[ 2 ].x = ar_cx + z.ar_w_r / 2
+	z._verts_ar_bg[ 2 ].y = ar_cy - z.ar_h / 2
+
+	z._verts_ar_bg[ 3 ].x = ar_cx + z.ar_w_r / 2 - z.ar_slant_x
+	z._verts_ar_bg[ 3 ].y = ar_cy + z.ar_h / 2
+
+	z._verts_ar_bg[ 4 ].x = ar_cx - z.ar_w_r / 2 + z.ar_slant_x
+	z._verts_ar_bg[ 4 ].y = ar_cy + z.ar_h / 2
+
+	local ar_mult_n
+	if localply then
+		ar_mult_n = localply:Armor() / 100
+	else
+		ar_mult_n = 0
+	end
+
+	ar_mult_n = math.max( 0, ar_mult_n )
+	ar_mult_n = math.min( 1, ar_mult_n )
+
+	z.ar_mult = ar_mult_n --(9 * z.ar_mult + ar_mult_n) / 10
+
+	if (z.ar_w_r/2) * z.ar_mult > z.ar_slant_x then
+		z._verts_ar_fg[ 1 ].x = ar_cx - (z.ar_w_r/2) * z.ar_mult + z.ar_padding_inner * 3
+		z._verts_ar_fg[ 1 ].y = ar_cy - z.ar_h / 2 + z.ar_padding_inner
+
+		z._verts_ar_fg[ 2 ].x = ar_cx + (z.ar_w_r/2) * z.ar_mult - z.ar_padding_inner * 3
+		z._verts_ar_fg[ 2 ].y = ar_cy - z.ar_h / 2 + z.ar_padding_inner
+
+		z._verts_ar_fg[ 3 ].x = ar_cx + (z.ar_w_r/2) * z.ar_mult - z.ar_padding_inner / 2 - z.ar_slant_x
+		z._verts_ar_fg[ 3 ].y = ar_cy + z.ar_h / 2 - z.ar_padding_inner
+
+		z._verts_ar_fg[ 4 ].x = ar_cx - (z.ar_w_r/2) * z.ar_mult + z.ar_padding_inner / 2 + z.ar_slant_x
+		z._verts_ar_fg[ 4 ].y = ar_cy + z.ar_h / 2 - z.ar_padding_inner
+	else
+		z._verts_ar_fg[ 1 ].x = 0
+		z._verts_ar_fg[ 1 ].y = 0
+
+		z._verts_ar_fg[ 2 ].x = 0
+		z._verts_ar_fg[ 2 ].y = 0
+
+		z._verts_ar_fg[ 3 ].x = 0
+		z._verts_ar_fg[ 3 ].y = 0
+
+		z._verts_ar_fg[ 4 ].x = 0
+		z._verts_ar_fg[ 4 ].y = 0
+	end
+end
+
+-------------------------------------------------------------------------------
+timer.Create( "HHUDRecalc", 0.1, -1, zHUDMain.Recalculate )
+if LocalPlayer() and LocalPlayer():IsValid() then zHUDMain.Recalculate() end
+-------------------------------------------------------------------------------
+
+local sinfo = {
+	["God"] = {flag ="FAdmin_godded", text = ""},
+	["Cloak"] = {flag ="FAdmin_cloaked", text = ""},
+	["NoClip"] = {flag = function(ply) return (ply:GetMoveType() == MOVETYPE_NOCLIP) and not ply:InVehicle() end, text = ""}
+}
+
+function zHUDMain.Main()
+	LocalPlayer().DarkRPVars = LocalPlayer().DarkRPVars or {}
+
+	local z = zHUDMain
+	draw.RoundedBox( 6, z._hp_cx - z.hp_w / 2 - 30, ScrH() - 85, z.hp_w + 100, 50 + 200, z.color_bg )
+
+-------------------------------------------------------------------------------
+-- Draw HP bar
+-------------------------------------------------------------------------------
+	surface.SetTexture( 0 )
+	surface.SetDrawColor( z.hp_bg )
+	surface.DrawPoly( z._verts_hp_bg )
+
+	local hp_fg = z.hp_fg
+	if LocalPlayer():Health() <= 30 then
+		hp_fg = Color( hp_fg.r + (100*math.abs(math.sin(CurTime()*2))), hp_fg.g + (100*math.abs(math.sin(CurTime()*2))), hp_fg.b + (100*math.abs(math.sin(CurTime()*2))), 255 )
+	end
+
+	surface.SetDrawColor( hp_fg )
+	surface.DrawPoly( z._verts_hp_fg )
+
+-------------------------------------------------------------------------------
+-- Draw Armor bar
+-------------------------------------------------------------------------------
+	surface.SetDrawColor( z.hp_bg )
+	surface.DrawPoly( z._verts_ar_bg )
+
+	surface.SetDrawColor( z.ar_fg )
+	surface.DrawPoly( z._verts_ar_fg )
+
+-------------------------------------------------------------------------------
+-- Draw name
+-------------------------------------------------------------------------------
+	surface.SetFont( z.font_a )
+	local name = LocalPlayer():GetName() or "???"
+	local tw, th = surface.GetTextSize( name )
+
+	th = 20
+
+	local tx, ty = z._hp_cx - z.hp_w / 2 + z.hp_slant_x, z._hp_cy - z.hp_h / 2 - th - 5
+	draw.RoundedBox( 4, tx, ty + 2, tw, th, zHUDMain.hp_bg )
+	surface.SetTextColor( 255, 255, 255 )
+	surface.SetTextPos( tx, ty )
+	surface.DrawText( name )
+
+-------------------------------------------------------------------------------
+-- Draw job
+-------------------------------------------------------------------------------
+	surface.SetFont( z.font_b )
+	local job = (LocalPlayer().DarkRPVars.job or "???")
+	local tw, th = surface.GetTextSize( job )
+
+	th = 20
+
+	local tx, ty = z._hp_cx - z.hp_w / 2 + z.hp_slant_x, z._hp_cy - z.hp_h / 2 - th - 22 + z.offset_y + 64
+	draw.RoundedBox( 4, tx, ty + 2, tw, th - 2, team.GetColor( LocalPlayer():Team() ) )
+	surface.SetTextColor( 255, 255, 255 )
+	surface.SetTextPos( tx, ty )
+	surface.DrawText( job )
+
+-------------------------------------------------------------------------------
+-- Draw $$$
+-------------------------------------------------------------------------------
+	surface.SetFont( z.font_a )
+
+	local money_actual = tonumber( LocalPlayer().DarkRPVars.money )
+	if not money_actual then
+		money_actual = 0
+	end
+
+	z.money = (9 * z.money + money_actual) / 10
+
+	local money_round = tonumber( string.format( "%u", z.money ) )
+	local money = "$" .. (formatNumber( money_round ) or "???") .. string.format( ' (%sР)', LocalPlayer():GetNWInt( "donator_money", 0 ) )
+	local money_bg = zHUDMain.money_bg
+	if money_round < money_actual then
+		money_bg = Color( 20, 150, 20, 255 )
+	elseif money_round > money_actual then
+		money_bg = Color( 255, 125, 125, 255 )
+	end
+
+	local tw, th = surface.GetTextSize( money )
+
+	th = 20
+
+	local tx, ty = z._hp_cx + 20 + z.hp_w_r / 2 - z.hp_slant_x - tw, z._hp_cy - z.hp_h / 2 - th - 5
+	draw.RoundedBox( 4, tx - 1, ty + 2, tw + 2, th, money_bg )
+	surface.SetTextColor( 255, 255, 255 )
+	surface.SetTextPos( tx, ty )
+	surface.DrawText( money )
+
+-------------------------------------------------------------------------------
+-- Draw salary
+-------------------------------------------------------------------------------
+	surface.SetFont( z.font_b )
+	local salary = "+ $" .. (LocalPlayer().DarkRPVars.salary or "???")
+	local tw, th = surface.GetTextSize( salary )
+
+	th = 20
+
+	local tx, ty = z._hp_cx + 20 + z.hp_w_r / 2 - z.hp_slant_x - tw, z._hp_cy - z.hp_h / 2 - th - 22 + z.offset_y + 64
+	draw.RoundedBox( 4, tx, ty + 2, tw, th - 2, zHUDMain.money_bg )
+	surface.SetTextColor( 255, 255, 255 )
+	surface.SetTextPos( tx, ty )
+	surface.DrawText( salary )
+
+-------------------------------------------------------------------------------
+-- Misc
+-------------------------------------------------------------------------------
+
+	draw.SimpleText( LocalPlayer():Health() .. " HP", "MenuLarge", z._hp_cx + 20, z._hp_cy , Color( 255, 255, 255, 255 ), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER )
+	draw.SimpleText( LocalPlayer():Armor() .. " Armor", "Default", z._ar_cx + 20, z._ar_cy - 1, Color( 255, 255, 255, 255 ), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER )
+
+	local weapon = LocalPlayer():GetActiveWeapon()
+		if IsValid(weapon) then
+			local weaponPrimaryType = weapon:GetPrimaryAmmoType()
+			local weaponClip = weapon:Clip1()
+			local weaponPrimary = LocalPlayer():GetAmmoCount(weaponPrimaryType)
+		if weaponPrimaryType > 0 or weapon:GetClass() == "weapon_medkit" then
+		if weaponClip < 0 then
+				draw.SimpleText(weaponPrimary, "TreCake", ScrW() - 55,  ScrH() - 30, color_white,1,TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+				else
+				draw.SimpleText(weaponClip.."/"..weaponPrimary, "TreCake", ScrW() - 55,  ScrH() - 30, color_white,1,TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+			end
+		end
+	end
+-------------------------------------------------------------------------------
+-- Admin
+-------------------------------------------------------------------------------
+local HNotify = {}
+HNotify.bgnormal = Color( 51, 51, 51, 200 )
+HNotify.bgadmin = Color( 51, 51, 51, 200 )
+HNotify.bgwanted = Color( 200, 0, 0, 200 )
+HNotify.white = Color( 255, 255, 255, 255 )
+
+CDBoard = CDBoard or {}
+
+function HNotify.GetMessage()
+	local ply = LocalPlayer()
+
+	if ply.DarkRPVars.Arrested then
+		return "В тюрьме", HNotify.white, HNotify.bgnormal
+	end
+
+	if ply.DarkRPVars.wanted then
+		return "Вас разыскивает полиция!", HNotify.white, HNotify.bgwanted
+	end
+
+	if GetGlobalBool("DarkRP_LockDown") then
+		return "Мэр объявил комендантский час, возвращайтесь по домам!", HNotify.white, HNotify.bgnormal
+	end
+
+	return ""
+end
+
+-------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
+local msgheight = ScrH() - 125
+local width = z.hp_w + 100
+local x = z._hp_cx - z.hp_w / 2 - 30
+local count = 1
+local sdraw = {}
+-------------------------------------------------------------------------------
+-- Admin function_1
+-------------------------------------------------------------------------------
+if LocalPlayer():IsAdmin() then
+local ply = FAdmin.SpectatingEnt and IsValid(FAdmin.SpectatingEnt()) and FAdmin.SpectatingEnt() or LocalPlayer()
+for k,v in pairs(sinfo) do
+if isstring(v.flag) and ply:FAdmin_GetGlobal(v.flag) and FAdmin.Access.PlayerHasPrivilege(LocalPlayer(), k) then
+sdraw[k] = {flag = v.flag, text = v.text}
+elseif isfunction(v.flag) and v.flag(ply) then
+sdraw[k] = {flag = v.flag, text = v.text}
+end
+end
+-------------------------------------------------------------------------------
+-- Admin function_2
+-------------------------------------------------------------------------------
+local count = table.Count(sdraw)
+width = width / count
+local total = 1
+for name, perm in pairs(sdraw) do
+local activec = Color(255,255,255,255)
+local activet = name..perm.text
+draw.RoundedBox( 6, x, msgheight, total != count and width - 2 or width, 35, HNotify.bgadmin)
+draw.SimpleText( activet, "Admin_Tre22", x + width - (width/2), ScrH() -  108, activec, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER )
+x = x + width
+total = total + 1
+end
+-------------------------------------------------------------------------------
+-- ???????
+-------------------------------------------------------------------------------
+if count >= 1 then
+msgheight = msgheight - 40
+end
+end
+-------------------------------------------------------------------------------
+-- Wanted - LockDown - arrest
+-------------------------------------------------------------------------------
+local msg, msgcol, bgcolmsg = HNotify.GetMessage()
+if msg != "" then
+draw.RoundedBox( 6, z._hp_cx - z.hp_w / 2 - 30, msgheight, z.hp_w + 100, 35, bgcolmsg )
+draw.SimpleText( msg, "Message_Tre22", z._hp_cx + 20, msgheight + 15, msgcol, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER )
+end
+end
+---------------------------------------------------------------------------
+-- Actual Draw HUD lements hook
+---------------------------------------------------------------------------
+local function DrawHUDElements()
+	Scrw, Scrh = ScrW(), ScrH()
+	RelativeX, RelativeY = 0, Scrh
+end
+
+---------------------------------------------------------------------------
+-- Actual HUD Paint hook
+---------------------------------------------------------------------------
+function GM:HUDPaint()
+	Scrw, Scrh = ScrW(), ScrH()
+	RelativeX, RelativeY = 0, Scrh
+	DrawHUD()
+	DrawEntityDisplay()
+	zHUDMain.Main()
+	self.BaseClass:HUDPaint()
+end
